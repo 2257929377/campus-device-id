@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>获取设备ID（复刻版）</title>
+  <title>获取设备ID</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -56,11 +56,6 @@
       word-break: break-all; background: #ffffffcc; padding: 12px 14px; border-radius: 20px;
       color: #0f172a; border: 1px solid #cbd5e1; margin: 8px 0 12px; line-height: 1.45;
     }
-    .payload-value {
-      font-family: 'SF Mono',monospace; font-size: 12px; word-break: break-all;
-      background: #fff; padding: 10px 12px; border-radius: 14px;
-      border: 1px solid #e2e8f0; color: #475569; white-space: pre-wrap;
-    }
     .btn-copy {
       background: #0f172a; border: none; padding: 12px 20px; border-radius: 60px;
       font-weight: 600; font-size: 15px; color: white; cursor: pointer;
@@ -68,6 +63,7 @@
       width: 100%; transition: all .2s;
     }
     .btn-copy:hover { background: #1e293b; }
+    .btn-copy.secondary { background: #334155; margin-top: 12px; }
     .copy-feedback {
       font-size: 13px; color: #2e7d32; padding: 6px 14px; border-radius: 60px;
       font-weight: 500; opacity: 0; transition: opacity .2s; display: inline-block;
@@ -75,6 +71,10 @@
     .footer-note {
       margin-top: 28px; font-size: 12px; color: #64748b;
       background: #f8fafc; padding: 10px 16px; border-radius: 60px; display: inline-block;
+    }
+    .warn-tip {
+      font-size: 13px; color: #b45309; background: #fef3c7;
+      padding: 10px 16px; border-radius: 16px; margin-top: 14px; text-align: left;
     }
     details.debug {
       margin-top: 20px; text-align: left; font-size: 12px; color: #64748b;
@@ -95,12 +95,10 @@
 
   <script>
     /* =========================================================
-     * 今日校园「扫码获取设备ID」复刻版
+     * 获取设备ID页面
      * 原理：今日校园 App 内置 WebView 注入了 Cordova 桥接对象，
-     * 通过官方公开的 cordova_*.js 调用原生插件 MAMPDevice.getDeviceInfo
-     * 拿到 deviceId/uuid。
+     * 通过官方桥接脚本调用原生插件 MAMPDevice.getDeviceInfo 拿到设备ID。
      *
-     * !! 与原版区别：本页面不会把你的设备ID上报到任何第三方服务器 !!
      * 如需上报到自己的后端，改下面的 REPORT_URL（留空 = 不上报）
      * ========================================================= */
     var REPORT_URL = "";   // 例如 "https://你的域名/report.php"，留空则纯本地展示
@@ -117,6 +115,9 @@
       });
     }
 
+    function isWeChat() { return /MicroMessenger/i.test(navigator.userAgent); }
+    function isiOS() { return !!navigator.userAgent.match(/\(i[^;]+;( U;)? CPU.+Mac OS X/); }
+
     /* ---------- 上报（可选，只发往 REPORT_URL） ---------- */
     function reportIfNeeded(payload) {
       if (!REPORT_URL || reported) return;
@@ -128,17 +129,15 @@
       }).catch(function (e) { dbg('上报失败: ' + e.message); });
     }
 
-    /* ---------- 成功 UI ---------- */
+    /* ---------- 成功 UI：只展示设备ID + 复制 ---------- */
     function showSuccessUI(deviceId, payload) {
       lastDeviceId = deviceId;
       var root = document.getElementById('appRoot');
       if (!root) return;
-      var payloadStr = '';
-      try { payloadStr = JSON.stringify(payload, null, 2); } catch (e) { payloadStr = String(payload); }
       root.innerHTML =
         '<div class="success-card">' +
           '<div class="icon-circle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></div>' +
-          '<h2>获取成功</h2>' +
+          '<h2>授权成功</h2>' +
           '<div class="sub">设备唯一标识如下，可复制用于配置</div>' +
           '<div class="id-card">' +
             '<div class="id-label">Device ID</div>' +
@@ -146,17 +145,8 @@
             '<button class="btn-copy" id="copyBtn">复制设备ID</button>' +
             '<span id="copyFeedback" class="copy-feedback">已复制 ✓</span>' +
           '</div>' +
-          '<div class="id-card">' +
-            '<div class="id-label">完整设备信息</div>' +
-            '<div class="payload-value">' + escapeHtml(payloadStr) + '</div>' +
-          '</div>' +
-          '<details class="debug"><summary>环境调试信息</summary><pre id="dbgInfo"></pre></details>' +
-          '<div class="footer-note">本页面为本地复刻版 · 设备ID不会上传到任何第三方</div>' +
+          '<div class="footer-note">✅ 授权已验证 | 唯一标识可复制用于配置</div>' +
         '</div>';
-
-      document.getElementById('dbgInfo').textContent =
-        'UA: ' + navigator.userAgent + '\n' +
-        'cordova: ' + (window.cordova ? '存在' : '不存在');
 
       var copyBtn = document.getElementById('copyBtn');
       var feedback = document.getElementById('copyFeedback');
@@ -177,17 +167,51 @@
       }
     }
 
+    /* ---------- 尝试拉起今日校园 App ----------
+     * Android 包名确认：com.wisedu.cpdaily（intent 方式，最可靠）
+     * iOS：尝试常见 scheme（wisedu:// / cpdaily://），未经真机实测，尽力而为
+     * 注意：微信内置浏览器会屏蔽 scheme 拉起，任何 App 都跳不动
+     */
+    function tryOpenCampusApp() {
+      if (isWeChat()) return false;
+      if (!isiOS()) {
+        var intentUrl = 'intent://campus/#Intent;scheme=wisedu;package=com.wisedu.cpdaily;S.browser_fallback_url=https%3A%2F%2Fwww.wisedu.com%2F;end';
+        window.location.href = intentUrl;
+        // intent 未命中 scheme 时系统会走 fallback_url，不会停留在报错页
+        return true;
+      }
+      // iOS：依次尝试
+      var schemes = ['wisedu://', 'cpdaily://', 'campushoy://'];
+      var i = 0;
+      (function next() {
+        if (i >= schemes.length) return;
+        window.location.href = schemes[i++];
+        setTimeout(next, 900);
+      })();
+      return true;
+    }
+
+    /* ---------- 失败 UI：引导去今日校园扫码 ---------- */
     function showFailUI(reason) {
       var root = document.getElementById('appRoot');
+      var wechatTip = isWeChat()
+        ? '<div class="warn-tip">⚠️ 检测到你在微信内打开 —— 微信会屏蔽跳转，任何页面都无法在微信里读取设备ID。请退出微信，改用「今日校园」App 的扫一扫打开。</div>'
+        : '';
       root.innerHTML =
         '<div class="success-card">' +
           '<div class="icon-circle" style="background:#f97316;"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg></div>' +
-          '<h2>获取失败</h2>' +
-          '<div class="sub">无法读取设备ID —— 大概率不在今日校园 App 环境内</div>' +
+          '<h2>请在今日校园中打开</h2>' +
+          '<div class="sub">设备ID只能在「今日校园」App 内读取 —— 普通浏览器、微信、系统相机都没有读取权限</div>' +
+          wechatTip +
           '<div class="id-card">' +
-            '<div class="id-label">原因</div>' +
-            '<div class="payload-value">' + escapeHtml(reason) + '</div>' +
-            '<button class="btn-copy" id="retryBtn" style="background:#334155; margin-top:12px;">重新尝试</button>' +
+            '<div class="id-label">正确操作</div>' +
+            '<div style="font-size:14px; line-height:2; color:#334155; padding:4px 0;">' +
+              '1️⃣ 打开「今日校园」App<br>' +
+              '2️⃣ 点击右上角「＋」或找到 <b>扫一扫</b><br>' +
+              '3️⃣ 扫描本页面的二维码即可自动获取设备ID' +
+            '</div>' +
+            '<button class="btn-copy" id="openAppBtn">尝试打开今日校园 App</button>' +
+            '<button class="btn-copy secondary" id="retryBtn">重新尝试获取</button>' +
           '</div>' +
           '<details class="debug"><summary>环境调试信息</summary><pre id="dbgInfo"></pre></details>' +
         '</div>';
@@ -196,6 +220,9 @@
         'cordova: ' + (window.cordova ? '存在' : '不存在') + '\n' +
         'BH_MOBILE: ' + (typeof BH_MOBILE !== 'undefined' ? '存在' : '不存在');
       document.getElementById('retryBtn').addEventListener('click', function () { location.reload(); });
+      document.getElementById('openAppBtn').addEventListener('click', function () {
+        tryOpenCampusApp();
+      });
     }
 
     /* ---------- 统一入口：拿到设备信息就展示 ---------- */
@@ -242,9 +269,8 @@
     /* ---------- 启动 ---------- */
     function bootstrap() {
       // 按平台加载今日校园官方公开的 Cordova 桥接脚本
-      var isiOS = !!navigator.userAgent.match(/\(i[^;]+;( U;)? CPU.+Mac OS X/);
       var s = document.createElement('script');
-      s.src = isiOS
+      s.src = isiOS()
         ? 'https://static.campushoy.com/innerjs/cordova_ios.js'
         : 'https://static.campushoy.com/innerjs/cordova_android.js';
       document.head.appendChild(s);
@@ -257,8 +283,7 @@
       setTimeout(function () {   // 最终兜底
         if (!done) {
           invokeMAMPDevice(); tryBHMobile(); tryWindowDevice();
-          if (!done) showFailUI('所有获取途径（MAMPDevice / BH_MOBILE / window.device）均无响应。' +
-            '请在「今日校园」App 内使用扫一扫打开本页面，普通浏览器没有 Cordova 原生桥，拿不到设备ID。');
+          if (!done) showFailUI('所有获取途径均无响应，当前环境不是今日校园 App 内置浏览器。');
         }
       }, 2500);
     }
